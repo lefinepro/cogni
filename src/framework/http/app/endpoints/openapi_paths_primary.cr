@@ -365,14 +365,34 @@ module ACD
               "post" => {
                 "tags" => ["Compat"],
                 "summary" => "OpenAI responses compatibility route",
-                "responses" => {"501" => {"$ref" => "#/components/responses/NotImplemented"}},
+                "responses" => {
+                  "200" => {
+                    "description" => "OpenAI Responses-compatible response",
+                    "content" => {
+                      "application/json" => {
+                        "schema" => {"type" => "object"},
+                      },
+                    },
+                  },
+                  "400" => {"description" => "Invalid JSON request"},
+                },
               },
             },
             "/v1/chat/completions" => {
               "post" => {
                 "tags" => ["Compat"],
                 "summary" => "OpenAI chat completions compatibility route",
-                "responses" => {"501" => {"$ref" => "#/components/responses/NotImplemented"}},
+                "responses" => {
+                  "200" => {
+                    "description" => "OpenAI chat completion response",
+                    "content" => {
+                      "application/json" => {
+                        "schema" => {"type" => "object"},
+                      },
+                    },
+                  },
+                  "400" => {"description" => "Invalid JSON request"},
+                },
               },
             },
             "/v1/chat/completions/{completion_id}" => {

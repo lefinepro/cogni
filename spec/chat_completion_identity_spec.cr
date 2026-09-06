@@ -1,6 +1,14 @@
 require "./spec_helper"
 
 describe "OpenAI chat completion identity fields" do
+  it "normalizes the Orator model aliases to the workflow model" do
+    app = ACD::Kemal::App.new(0)
+
+    app.test_normalize_chat_model("orator").should eq("workflow/orator")
+    app.test_normalize_chat_model("workflow-orator").should eq("workflow/orator")
+    app.test_normalize_chat_model("workflow/custom").should eq("workflow/custom")
+  end
+
   it "copies caller identity fields into workflow input data" do
     app = ACD::Kemal::App.new(0)
     source = {

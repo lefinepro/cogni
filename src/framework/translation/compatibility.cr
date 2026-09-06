@@ -183,7 +183,7 @@ module Ocawe
               messages << message_json("user", text)
             elsif hash = item.as_h?
               role = hash["role"]?.try(&.as_s?) || "user"
-              content = hash["content"]?.try(&.as_s?) || hash["text"]?.try(&.as_s?) || hash["input_text"]?.try(&.as_s?)
+              content = open_response_content_text(hash["content"]?) || hash["text"]?.try(&.as_s?) || hash["input_text"]?.try(&.as_s?)
               messages << message_json(role, content) if content && !content.empty?
             end
           end
@@ -246,6 +246,23 @@ module Ocawe
 
     private def message_json(role : String, content : String) : JSON::Any
       JSON.parse({"role" => role, "content" => content}.to_json)
+    end
+
+    private def open_response_content_text(value : JSON::Any?) : String?
+      return unless value
+      if text = value.as_s?
+        return text
+      end
+
+      blocks = value.as_a?
+      return unless blocks
+
+      text = blocks.compact_map do |block|
+        hash = block.as_h?
+        next unless hash
+        hash["text"]?.try(&.as_s?) || hash["input_text"]?.try(&.as_s?)
+      end.join("\n")
+      text unless text.empty?
     end
 
     private def extract_output_text(output : JSON::Any?) : String

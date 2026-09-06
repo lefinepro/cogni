@@ -293,6 +293,7 @@ Use =OCAWE_TRIGGER_BASE_URL= or =--base-url= to target a non-default runtime URL
 
 ** Compatibility
 
+- =POST /v1/responses= (OpenAI Responses-compatible)
 - =POST /v1/chat/completions=
 - =GET /v1/chat/completions/:completion_id=
 - =POST /v1/chat/completions/tasks=

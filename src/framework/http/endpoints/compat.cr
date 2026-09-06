@@ -7,8 +7,8 @@ module ACD
 
       private def mount_compat_endpoints
         post "/v1/messages" do |env|
-          body = json_body(env)
           begin
+            body = compatibility_json_body(env)
             raise "streaming Anthropic messages are not supported" if stream_requested?(body)
             request_json = body.to_json
             Ocawe::Translation.detect("/v1/messages", request_json)
@@ -32,14 +32,12 @@ module ACD
         end
 
         post "/v1/responses" do |env|
-          body = json_body(env)
           begin
+            body = compatibility_json_body(env)
             chat_body = Ocawe::Translation.request_as_chat("/v1/responses", body.to_json)
             completion = build_chat_completion(JSON.parse(chat_body).as_h, env.request.headers)
             response = JSON.parse(Ocawe::Translation.chat_response_as_open_responses(completion.to_json, body.to_json)).as_h
-            env.response.status_code = 200
-            env.response.content_type = "application/json"
-            response.to_json
+            write_open_responses_response(env, response, stream_requested?(body))
           rescue ex
             env.response.status_code = completion_error_status(ex)
             env.response.content_type = "application/json"
@@ -48,8 +46,22 @@ module ACD
         end
 
         post "/v1/chat/completions" do |env|
-          body = json_body(env)
           begin
+            body = compatibility_json_body(env)
+            completion = build_chat_completion(body, env.request.headers)
+            write_chat_completion_response(env, completion, stream_requested?(body))
+          rescue ex
+            env.response.status_code = completion_error_status(ex)
+            env.response.content_type = "application/json"
+            {error: {type: "completion_error", message: ex.message || "chat completion failed"}}.to_json
+          end
+        end
+
+        # Keep accepting the singular spelling used by a few OpenAI-compatible
+        # clients while preserving the standard plural route above.
+        post "/v1/chat/completion" do |env|
+          begin
+            body = compatibility_json_body(env)
             completion = build_chat_completion(body, env.request.headers)
             write_chat_completion_response(env, completion, stream_requested?(body))
           rescue ex
@@ -63,8 +75,8 @@ module ACD
         # with `chat/completions`, producing a trailing slash. Kemal does not
         # normalize that path, so expose the equivalent route explicitly.
         post "/v1/chat/completions/" do |env|
-          body = json_body(env)
           begin
+            body = compatibility_json_body(env)
             completion = build_chat_completion(body, env.request.headers)
             write_chat_completion_response(env, completion, stream_requested?(body))
           rescue ex
@@ -265,7 +277,10 @@ module ACD
       end
 
       private def normalize_chat_model(model : String) : String
-        model.strip
+        normalized = model.strip
+        return "workflow/orator" if ["orator", "workflow-orator"].includes?(normalized)
+
+        normalized
       end
 
       private def workflow_id_for_chat_body(body : Ocawe::Workflow::AnyHash) : String?
@@ -376,6 +391,7 @@ module ACD
 
       private def completion_error_status(ex : Exception) : Int32
         message = ex.message || ""
+        return 400 if message.includes?("request body") || message.includes?("invalid JSON")
         return 401 if message.includes?("unauthorized:")
         return 404 if message.includes?("not found") || message.includes?("unknown workflow")
         return 504 if message.includes?("_execution_timeout:")
@@ -383,6 +399,16 @@ module ACD
         return 502 if message.includes?("_execution_error:") || message.includes?("_empty_model_answer:")
         return 502 if message.includes?("workflow ") || message.includes?("provider") || message.includes?("fmatch")
         422
+      end
+
+      private def compatibility_json_body(env) : Ocawe::Workflow::AnyHash
+        raw = env.request.body.try(&.gets_to_end).to_s
+        raise "request body must not be empty" if raw.strip.empty?
+
+        parsed = JSON.parse(raw)
+        parsed.as_h? || raise "request body must be a JSON object"
+      rescue ex : JSON::ParseException
+        raise "request body must contain valid JSON"
       end
 
       private def resolve_file_resources(body : Ocawe::Workflow::AnyHash) : Array(Ocawe::Files::AnyHash)
@@ -514,6 +540,114 @@ module ACD
 
       private def stream_requested?(body : Hash(String, JSON::Any)) : Bool
         body["stream"]?.try(&.as_bool?) || false
+      end
+
+      private def write_open_responses_response(env, response : Hash(String, JSON::Any), stream : Bool) : String
+        unless stream
+          env.response.status_code = 200
+          env.response.content_type = "application/json"
+          return response.to_json
+        end
+
+        env.response.status_code = 200
+        env.response.content_type = "text/event-stream"
+        env.response.headers["Cache-Control"] = "no-cache"
+        env.response.headers["Connection"] = "keep-alive"
+
+        response_id = response["id"]?.try(&.as_s?) || "resp_#{Random::Secure.hex(12)}"
+        created_at = response["created_at"]?.try(&.as_i64?) || Time.utc.to_unix
+        model = response["model"]?.try(&.as_s?) || "unknown"
+        output = response["output"]?.try(&.as_a?) || [] of JSON::Any
+        source_item = output.first?.try(&.as_h?) || {} of String => JSON::Any
+        item_id = source_item["id"]?.try(&.as_s?) || "#{response_id}_item_0"
+        text = response["output_text"]?.try(&.as_s?) || open_response_output_text(source_item)
+
+        in_progress = response.dup
+        in_progress["status"] = JSON.parse(%("in_progress"))
+        in_progress.delete("completed_at")
+        in_progress["output"] = JSON.parse("[]")
+        write_open_responses_event(env, "response.created", in_progress.to_json)
+        write_open_responses_event(env, "response.in_progress", in_progress.to_json)
+
+        item = source_item.dup
+        item["id"] = JSON.parse(item_id.to_json)
+        item["type"] = JSON.parse(%("message")) unless item.has_key?("type")
+        item["role"] = JSON.parse(%("assistant")) unless item.has_key?("role")
+        item["status"] = JSON.parse(%("in_progress"))
+        item["content"] = JSON.parse("[]")
+        write_open_responses_event(env, "response.output_item.added", {
+          "type" => "response.output_item.added",
+          "item" => item,
+          "output_index" => 0,
+        }.to_json)
+
+        part = JSON.parse({
+          "type"        => "output_text",
+          "annotations" => [] of JSON::Any,
+          "text"        => "",
+        }.to_json).as_h
+        write_open_responses_event(env, "response.content_part.added", {
+          "type"         => "response.content_part.added",
+          "item_id"      => item_id,
+          "output_index" => 0,
+          "content_index" => 0,
+          "part"         => part,
+        }.to_json)
+
+        unless text.empty?
+          write_open_responses_event(env, "response.output_text.delta", {
+            "type"          => "response.output_text.delta",
+            "item_id"       => item_id,
+            "output_index"  => 0,
+            "content_index" => 0,
+            "delta"         => text,
+            "logprobs"      => nil,
+          }.to_json)
+        end
+
+        write_open_responses_event(env, "response.output_text.done", {
+          "type"          => "response.output_text.done",
+          "item_id"       => item_id,
+          "output_index"  => 0,
+          "content_index" => 0,
+          "text"          => text,
+          "logprobs"      => nil,
+        }.to_json)
+
+        part["text"] = JSON.parse(text.to_json)
+        write_open_responses_event(env, "response.content_part.done", {
+          "type"          => "response.content_part.done",
+          "item_id"       => item_id,
+          "output_index"  => 0,
+          "content_index" => 0,
+          "part"          => part,
+        }.to_json)
+
+        item["status"] = JSON.parse(%("completed"))
+        item["content"] = JSON.parse({
+          "type"        => "output_text",
+          "annotations" => [] of JSON::Any,
+          "text"        => text,
+        }.to_json)
+        write_open_responses_event(env, "response.output_item.done", {
+          "type"         => "response.output_item.done",
+          "item"         => item,
+          "output_index" => 0,
+        }.to_json)
+
+        write_open_responses_event(env, "response.completed", response.to_json)
+        ""
+      end
+
+      private def write_open_responses_event(env, event : String, payload : String) : Nil
+        env.response.print "event: #{event}\ndata: #{payload}\n\n"
+      end
+
+      private def open_response_output_text(item : Hash(String, JSON::Any)) : String
+        content = item["content"]?.try(&.as_a?) || [] of JSON::Any
+        content.compact_map do |block|
+          block.as_h?.try(&.["text"]?).try(&.as_s?)
+        end.join
       end
 
       private def write_chat_completion_response(env, completion, stream : Bool) : String

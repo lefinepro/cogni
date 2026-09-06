@@ -18,6 +18,7 @@ Key endpoints:
 - `GET /v1/agents/{agentId}`
 - `POST /v1/agents/{agentId}/generate`
 - `POST /v1/skills/{skillId}/execute`
+- `POST /v1/responses` (OpenAI Responses-compatible)
 - `POST /v1/chat/completions` (OpenAI-compatible)
 - `GET /v1/chat/completions/{completion_id}`
 - `POST /v1/chat/completions/tasks`

@@ -70,6 +70,22 @@ describe Ocawe::Translation do
     normalized["messages"][0]["content"].as_s.should eq("hello")
   end
 
+  it "normalizes OpenResponses input_text content blocks" do
+    request = {
+      "model" => "demo",
+      "input" => [{
+        "type" => "message",
+        "role" => "user",
+        "content" => [{"type" => "input_text", "text" => "hello from a block"}],
+      }],
+    }.to_json
+
+    normalized = JSON.parse(Ocawe::Translation.request_as_chat("/v1/responses", request))
+
+    normalized["messages"][0]["role"].as_s.should eq("user")
+    normalized["messages"][0]["content"].as_s.should eq("hello from a block")
+  end
+
   it "converts chat completions to and from OpenResponses" do
     completion = {
       "id" => "chatcmpl_test",
