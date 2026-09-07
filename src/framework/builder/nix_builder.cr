@@ -37,6 +37,7 @@ module Ocawe
         copy_executable(runtime_binary, File.join(rootfs, "app", "ocawecore"))
         copy_binary_closure(runtime_binary, rootfs)
         copy_package_tools(packages, rootfs)
+        ensure_ca_bundle(rootfs)
         copy_default_tools(rootfs)
         write_runtime_entrypoint(rootfs)
         copied_workflow_config = copy_workflow_cawfile(context_dir, rootfs)
@@ -137,6 +138,27 @@ module Ocawe
         packages.each do |package|
           copy_nix_package(package, rootfs)
         end
+      end
+
+      # Scratch images have no system certificate store. Keep HTTPS provider
+      # calls working even when a Cawfile does not declare any packages.
+      private def ensure_ca_bundle(rootfs : String) : Nil
+        bundle = File.join(rootfs, "etc", "ssl", "certs", "ca-bundle.crt")
+        return if File.file?(bundle)
+
+        output = IO::Memory.new
+        status = Process.run(
+          "nix",
+          args: ["build", "--no-link", "--print-out-paths", "nixpkgs#cacert"],
+          output: output,
+          error: Process::Redirect::Inherit
+        )
+        raise "Nix cacert package could not be built" unless status.success?
+
+        package_path = output.to_s.lines.map(&.strip).reject(&.empty?).first?
+        raise "Nix cacert package produced no output path" unless package_path
+        expose_ca_bundle(package_path, rootfs)
+        raise "Nix cacert package did not contain a CA bundle" unless File.file?(bundle)
       end
 
       private def copy_default_tools(rootfs : String) : Nil

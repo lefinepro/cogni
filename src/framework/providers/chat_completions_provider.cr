@@ -1,17 +1,19 @@
 require "http/client"
 require "json"
 require "./provider"
+require "./http_client"
 
 module OcaweCore
   module AI
     class ChatCompletionProvider
       include Provider
+      include ProviderHTTP
 
       DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
       def initialize(
         @api_key : String? = ENV["OPENAI_API_KEY"]?,
-        @base_url : String = ENV["OPENAI_BASE_URL"]? || DEFAULT_BASE_URL
+        @base_url : String = ENV["OPENAI_BASE_URL"]? || DEFAULT_BASE_URL,
       )
       end
 
@@ -25,7 +27,7 @@ module OcaweCore
         raise "API_KEY is required for ChatCompletion provider" unless key
 
         payload = {
-          "model" => any(request.model),
+          "model"    => any(request.model),
           "messages" => any(build_messages(request)),
         } of String => JSON::Any
 
@@ -100,34 +102,6 @@ module OcaweCore
           base = base[0, idx + 3]
         end
         base.ends_with?("/v1") ? base : "#{base}/v1"
-      end
-
-      private def post_json(url : String, key : String, body : String, timeout : Time::Span) : HTTP::Client::Response
-        uri = URI.parse(url)
-        HTTP::Client.new(uri) do |client|
-          client.connect_timeout = timeout
-          client.read_timeout = timeout
-          client.write_timeout = timeout
-          client.post(
-            uri.request_target,
-            headers: HTTP::Headers{
-              "Authorization" => "Bearer #{key}",
-              "Content-Type"  => "application/json",
-            },
-            body: body
-          )
-        end
-      end
-
-      private def request_timeout(metadata : AnyHash) : Time::Span
-        seconds = metadata_number(metadata["timeout_seconds"]?) || metadata_number(metadata["timeout"]?) || 20.0
-        seconds = 1.0 if seconds < 1.0
-        seconds.seconds
-      end
-
-      private def metadata_number(value : JSON::Any?) : Float64?
-        return nil unless value
-        value.as_f? || value.as_i?.try(&.to_f) || value.as_s?.try(&.to_f?)
       end
 
       private def copy_metadata(payload : Hash(String, JSON::Any), metadata : AnyHash, key : String) : Nil

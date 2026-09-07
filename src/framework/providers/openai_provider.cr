@@ -4,12 +4,13 @@ module OcaweCore
   module AI
     class OpenResponsesProvider
       include Provider
+      include ProviderHTTP
 
       DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
       def initialize(
         @api_key : String? = ENV["OPENAI_API_KEY"]?,
-        @base_url : String = ENV["OPENAI_BASE_URL"]? || DEFAULT_BASE_URL
+        @base_url : String = ENV["OPENAI_BASE_URL"]? || DEFAULT_BASE_URL,
       )
       end
 
@@ -31,13 +32,11 @@ module OcaweCore
         } of String => JSON::Any
 
         effective_base = request.base_url || @base_url
-        response = HTTP::Client.post(
+        response = post_json(
           "#{normalized_base_url(effective_base)}/responses",
-          headers: HTTP::Headers{
-            "Authorization" => "Bearer #{key}",
-            "Content-Type"  => "application/json",
-          },
-          body: payload.to_json
+          key,
+          payload.to_json,
+          request_timeout(request.metadata)
         )
 
         unless response.success?

@@ -1,15 +1,17 @@
 require "./provider"
+require "./http_client"
 
 module OcaweCore
   module AI
     class GonkaProvider
       include Provider
+      include ProviderHTTP
 
       DEFAULT_BASE_URL = "https://api.gonka.ai/v1"
 
       def initialize(
         @api_key : String? = ENV["GONKA_API_KEY"]?,
-        @base_url : String = ENV["GONKA_BASE_URL"]? || DEFAULT_BASE_URL
+        @base_url : String = ENV["GONKA_BASE_URL"]? || DEFAULT_BASE_URL,
       )
       end
 
@@ -23,19 +25,17 @@ module OcaweCore
         raise "GONKA_API_KEY is required for Gonka provider" unless key
 
         payload = {
-          "model"   => any(request.model),
-          "prompt"  => any(request.prompt),
-          "system"  => request.system ? any(request.system) : nil,
+          "model"  => any(request.model),
+          "prompt" => any(request.prompt),
+          "system" => request.system ? any(request.system) : nil,
         }.compact
 
         effective_base = request.base_url || @base_url
-        response = HTTP::Client.post(
+        response = post_json(
           "#{normalized_base_url(effective_base)}/chat/completions",
-          headers: HTTP::Headers{
-            "Authorization" => "Bearer #{key}",
-            "Content-Type"  => "application/json",
-          },
-          body: payload.to_json
+          key,
+          payload.to_json,
+          request_timeout(request.metadata)
         )
 
         unless response.success?
@@ -63,11 +63,11 @@ module OcaweCore
         choices = payload["choices"]?.try(&.as_a?)
         return "" unless choices
 
-      first = choices.first?
-      return "" unless first
+        first = choices.first?
+        return "" unless first
 
-      message = first.as_h?.try(&.["message"]?).try(&.as_h?)
-      return "" unless message
+        message = first.as_h?.try(&.["message"]?).try(&.as_h?)
+        return "" unless message
 
         content = message["content"]?.try(&.as_s?)
         raise "Gonka response is missing generated text" unless content
