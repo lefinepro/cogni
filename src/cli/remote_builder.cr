@@ -16,6 +16,7 @@ module OcaweCore
         runtime_root : String = "/var/lib/ocawe/runtimes",
         deploy : Bool = false,
         namespace : String = "default",
+        start_mode : Bool = false,
         dry_run : Bool = false
 
       def initialize(@project_root : String)
@@ -39,7 +40,7 @@ module OcaweCore
           staging = File.join(tmp, "context")
           stage_source(staging, workflow_root)
           generate_entrypoint(staging)
-          write_dockerfile(staging, safe_service)
+          write_dockerfile(staging, safe_service, options.start_mode)
 
           archive = File.join(tmp, "#{safe_service}.tar.gz")
           run!("tar", ["-C", staging, "--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner", "-czf", archive, "."])
@@ -172,8 +173,13 @@ module OcaweCore
         end
       end
 
-      private def write_dockerfile(staging : String, service : String) : Nil
+      private def write_dockerfile(staging : String, service : String, start_mode : Bool = false) : Nil
         runtime_name = "#{service}-runtime"
+        entrypoint = if start_mode
+                       "ENTRYPOINT [\"/runtime/#{runtime_name}\", \"-p\", \"8080\", \"--start-mode\"]"
+                     else
+                       "ENTRYPOINT [\"/runtime/#{runtime_name}\", \"-p\", \"8080\"]"
+                     end
         dockerfile = <<-DOCKERFILE
         ARG BASE_IMAGE=ocawe:latest
         FROM nixos/nix:2.28.3 AS build
@@ -189,24 +195,20 @@ module OcaweCore
 
         FROM ${BASE_IMAGE}
         WORKDIR /workflows/#{service}
-        # The compiled Ocawe runtime links against SQLite, while the public
-        # Crystal base image does not ship the runtime library. Without this
-        # package the container reports the misleading "no such file or
-        # directory" error when launching the otherwise present binary.
-        RUN apt-get update \
-          && apt-get install -y --no-install-recommends libsqlite3-0 \
-          && rm -rf /var/lib/apt/lists/*
+        # The runtime base is immutable. Ocawe/Nix bases already carry the
+        # runtime closure; do not assume that the base has apt or any other
+        # package manager.
         COPY --from=build /out/#{runtime_name} /runtime/#{runtime_name}
         COPY workflow/Cawfile /workflows/#{service}/Cawfile
         COPY workflow/plugins /workflows/#{service}/plugins
-        ENTRYPOINT ["/runtime/#{runtime_name}", "-p", "8080"]
+        #{entrypoint}
         DOCKERFILE
         File.write(File.join(staging, "Dockerfile"), dockerfile)
       end
 
       private def run_remote(options : Options, service : String, hash : String, image : String, remote_archive : String) : Nil
         script = remote_script
-        args = ["-F", "/dev/null", "-o", "StrictHostKeyChecking=no", ssh_target(options.host), "bash", "-s", "--", service, hash, image, remote_archive, options.manager, options.base_image, options.runtime_root, options.deploy ? "1" : "0", options.namespace]
+        args = ["-F", "/dev/null", "-o", "StrictHostKeyChecking=no", ssh_target(options.host), "bash", "-s", "--", service, hash, image, remote_archive, options.manager, options.base_image, options.runtime_root, options.deploy ? "1" : "0", options.namespace, options.start_mode ? "1" : "0"]
         status = Process.run("ssh", args: args, input: IO::Memory.new(script), output: Process::Redirect::Inherit, error: Process::Redirect::Inherit)
         raise "remote build command exited with status #{status.exit_code}" unless status.success?
       end
@@ -223,6 +225,7 @@ module OcaweCore
         runtime_root="$7"
         deploy="$8"
         namespace="$9"
+        start_mode="${10}"
         runtime_name="${service}-runtime"
         service_root="${runtime_root}/${service}"
         build_root="/tmp/ocawe-builds/${service}/${hash}"
@@ -306,7 +309,10 @@ module OcaweCore
             # The runtime binary is compiled from the staged Ocawe sources. Do
             # not reuse an older Docker build layer here: a remote deployment
             # must contain the exact framework source used for this bundle.
-            run_manager build --no-cache --build-arg "BASE_IMAGE=$base_image" -t "$image" "$build_root/context"
+            # The workflow base image is loaded into the remote container
+            # manager, not published to a registry.  Prevent BuildKit from
+            # trying to resolve that local image through Docker Hub.
+            run_manager build --pull=false --no-cache --build-arg "BASE_IMAGE=$base_image" -t "$image" "$build_root/context"
 
             container="ocawe-extract-${service}-${hash}"
             run_manager rm -f "$container" >/dev/null 2>&1 || true
@@ -359,48 +365,68 @@ module OcaweCore
             # live Deployment patch alone therefore regresses to the old
             # workflow, image, and legacy runtime mount. Keep the addon file
             # as the source of truth whenever this service is addon-managed.
-            command -v jq >/dev/null 2>&1 || {
-              echo "[ocawe] addon-managed deploy requires jq on the remote host" >&2
-              exit 1
-            }
-            cawfile="$build_root/context/workflow/Cawfile"
-            plugin_data='{}'
-            if [ -d "$build_root/context/workflow/plugins" ]; then
-              while IFS= read -r -d '' plugin_file; do
-                plugin_name="$(basename "$plugin_file")"
-                plugin_content="$(jq -Rs . < "$plugin_file")"
-                plugin_data="$(jq --arg name "$plugin_name" --argjson content "$plugin_content" '. + {($name): $content}' <<<"$plugin_data")"
-              done < <(find "$build_root/context/workflow/plugins" -type f -print0 | sort -z)
+            if [ "$start_mode" = "1" ]; then
+              # Addon manifests are YAML. The start image already contains
+              # the Cawfile and compiled plugins, so update only the
+              # Deployment image/args and remove the stale ConfigMap mounts.
+              # This keeps the addon source authoritative without requiring
+              # jq or yq on the production host.
+              addon_tmp="${addon_manifest}.tmp.$$"
+              run_privileged cp "$addon_manifest" "$addon_tmp"
+              run_privileged env SERVICE="$service" IMAGE="$image" perl -0pi -e '
+                s{(^[ ]{8}- args:)\n(?:^[ ]{10}- .*\n)+(?=^[ ]{10}env:)}{$1 []\n}mg;
+                s{^[ ]{10}image: ocawe:latest$}{          image: $ENV{IMAGE}}mg;
+                s{^[ ]{10}- mountPath: /workflows/\Q$ENV{SERVICE}\E/Cawfile\n^[ ]{12}name: cawfile\n^[ ]{12}subPath: Cawfile\n}{}mg;
+                s{^[ ]{10}- mountPath: /workflows/\Q$ENV{SERVICE}\E/plugins\n^[ ]{12}name: plugins\n}{}mg;
+              ' "$addon_tmp"
+              run_privileged install -m 0644 "$addon_tmp" "$addon_manifest"
+              run_privileged rm -f "$addon_tmp"
+            else
+              command -v jq >/dev/null 2>&1 || {
+                echo "[ocawe] addon-managed deploy requires jq on the remote host" >&2
+                exit 1
+              }
+              cawfile="$build_root/context/workflow/Cawfile"
+              plugin_data='{}'
+              if [ -d "$build_root/context/workflow/plugins" ]; then
+                while IFS= read -r -d '' plugin_file; do
+                  plugin_name="$(basename "$plugin_file")"
+                  plugin_content="$(jq -Rs . < "$plugin_file")"
+                  plugin_data="$(jq --arg name "$plugin_name" --argjson content "$plugin_content" '. + {($name): $content}' <<<"$plugin_data")"
+                done < <(find "$build_root/context/workflow/plugins" -type f -print0 | sort -z)
+              fi
+              addon_tmp="${addon_manifest}.tmp.$$"
+              run_privileged jq \
+                --arg service "$service" \
+                --arg image "$image" \
+                --arg runtime_name "$runtime_name" \
+                --arg workflow_hash "$hash" \
+                --arg start_mode "$start_mode" \
+                --rawfile cawfile "$cawfile" \
+                --argjson plugin_data "$plugin_data" \
+                '
+                  def update_item:
+                    if .kind == "ConfigMap" and .metadata.name == ($service + "-workflow") then
+                      .data.Cawfile = $cawfile
+                    elif .kind == "ConfigMap" and .metadata.name == ($service + "-plugins") then
+                      .data = $plugin_data
+                    elif .kind == "Deployment" and .metadata.name == $service then
+                      .spec.template.metadata.annotations["sireng.io/workflow-hash"] = $workflow_hash
+                      | .spec.template.spec.containers = (.spec.template.spec.containers | map(
+                          if .name == $service then
+                            .image = $image
+                            | if $start_mode == "1" then .args = [] else . end
+                            | .volumeMounts = ((.volumeMounts // []) | map(
+                                select(.mountPath != "/runtime" and .mountPath != ("/runtime/" + $runtime_name))
+                              ))
+                          else . end
+                        ))
+                    else . end;
+                  if .kind == "List" then .items |= map(update_item) else update_item end
+                ' "$addon_manifest" | run_privileged tee "$addon_tmp" >/dev/null
+              run_privileged install -m 0644 "$addon_tmp" "$addon_manifest"
+              run_privileged rm -f "$addon_tmp"
             fi
-            addon_tmp="${addon_manifest}.tmp.$$"
-            run_privileged jq \
-              --arg service "$service" \
-              --arg image "$image" \
-              --arg runtime_name "$runtime_name" \
-              --arg workflow_hash "$hash" \
-              --rawfile cawfile "$cawfile" \
-              --argjson plugin_data "$plugin_data" \
-              '
-                def update_item:
-                  if .kind == "ConfigMap" and .metadata.name == ($service + "-workflow") then
-                    .data.Cawfile = $cawfile
-                  elif .kind == "ConfigMap" and .metadata.name == ($service + "-plugins") then
-                    .data = $plugin_data
-                  elif .kind == "Deployment" and .metadata.name == $service then
-                    .spec.template.metadata.annotations["sireng.io/workflow-hash"] = $workflow_hash
-                    | .spec.template.spec.containers = (.spec.template.spec.containers | map(
-                        if .name == $service then
-                          .image = $image
-                          | .volumeMounts = ((.volumeMounts // []) | map(
-                              select(.mountPath != "/runtime" and .mountPath != ("/runtime/" + $runtime_name))
-                            ))
-                        else . end
-                      ))
-                  else . end;
-                if .kind == "List" then .items |= map(update_item) else update_item end
-              ' "$addon_manifest" | run_privileged tee "$addon_tmp" >/dev/null
-            run_privileged install -m 0644 "$addon_tmp" "$addon_manifest"
-            run_privileged rm -f "$addon_tmp"
             "${kubectl_cmd[@]}" "${kubectl_args[@]}" apply -f "$addon_manifest"
           else
             if [ -f "$build_root/context/workflow/Cawfile" ]; then
@@ -423,7 +449,11 @@ module OcaweCore
             # Strategic merge keeps project-owned environment variables and
             # data mounts. Only the legacy host-mounted runtime is removed so
             # the binary from this exact image remains authoritative.
-            patch_payload=$(printf '{"spec":{"template":{"spec":{"containers":[{"name":"%s","image":"%s","volumeMounts":[{"mountPath":"/workflows/%s/Cawfile","name":"cawfile","subPath":"Cawfile"},{"mountPath":"/workflows/%s/plugins","name":"plugins"},{"mountPath":"/runtime","$patch":"delete"},{"mountPath":"/runtime/%s","$patch":"delete"}]}]}}}}' "$service" "$image" "$service" "$service" "$runtime_name")
+            if [ "$start_mode" = "1" ]; then
+              patch_payload=$(printf '{"spec":{"template":{"spec":{"containers":[{"name":"%s","image":"%s","args":[],"volumeMounts":[{"mountPath":"/workflows/%s/Cawfile","name":"cawfile","subPath":"Cawfile"},{"mountPath":"/workflows/%s/plugins","name":"plugins"},{"mountPath":"/runtime","$patch":"delete"},{"mountPath":"/runtime/%s","$patch":"delete"}]}]}}}}' "$service" "$image" "$service" "$service" "$runtime_name")
+            else
+              patch_payload=$(printf '{"spec":{"template":{"spec":{"containers":[{"name":"%s","image":"%s","volumeMounts":[{"mountPath":"/workflows/%s/Cawfile","name":"cawfile","subPath":"Cawfile"},{"mountPath":"/workflows/%s/plugins","name":"plugins"},{"mountPath":"/runtime","$patch":"delete"},{"mountPath":"/runtime/%s","$patch":"delete"}]}]}}}}' "$service" "$image" "$service" "$service" "$runtime_name")
+            fi
             "${kubectl_cmd[@]}" "${kubectl_args[@]}" patch deployment "$service" --type=strategic -p "$patch_payload"
             "${kubectl_cmd[@]}" "${kubectl_args[@]}" set image "deployment/$service" "$service=$image"
           fi
