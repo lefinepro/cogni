@@ -153,6 +153,7 @@
           runtimeRoot = pkgs.buildEnv {
             name = "ocawe-runtime-root";
             paths = [ ocawe ] ++ runtimeDeps;
+            pathsToLink = [ "/bin" "/share" ];
           };
 
           ociImage = pkgs.dockerTools.buildLayeredImage {
