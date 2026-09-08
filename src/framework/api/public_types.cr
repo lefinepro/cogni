@@ -46,6 +46,7 @@ module Api
       property workflow : String?
       property workflow_input : Hash(String, JSON::Any)?
       property tools : Array(Hash(String, JSON::Any))?
+      property max_output_tokens : Int32?
     end
 
     # Mirrors POST /v1/responses response body.

@@ -143,6 +143,7 @@ module ACD
         base_url = body["base_url"]?.try(&.as_s?)
         tools = body["tools"]?.try(&.as_a?)
         raw_messages = body["messages"]?.try(&.as_a?)
+        copy_generation_limits(metadata, body)
         files = resolve_file_resources(body)
         metadata["files"] = JSON.parse(files.to_json) unless files.empty?
 
@@ -165,6 +166,9 @@ module ACD
             # selected workflow. Workflow-specific policy stays in its Cawfile.
             "model"    => JSON.parse(model.to_json),
           } of String => JSON::Any
+          ["max_output_tokens", "max_tokens", "max_completion_tokens"].each do |key|
+            input_data[key] = body[key] if body[key]?
+          end
           input_data["system"] = JSON.parse(system_message.to_json) if system_message
           input_data["files"] = JSON.parse(files.to_json) unless files.empty?
           input_data["command"] = JSON.parse(body["command"].to_json) if body["command"]?
@@ -281,6 +285,16 @@ module ACD
         return "workflow/orator" if ["orator", "workflow-orator"].includes?(normalized)
 
         normalized
+      end
+
+      private def copy_generation_limits(metadata : Hash(String, JSON::Any), body : Ocawe::Workflow::AnyHash) : Nil
+        ["max_tokens", "max_completion_tokens"].each do |key|
+          metadata[key] = body[key] if body[key]? && !metadata[key]?
+        end
+        if value = body["max_output_tokens"]?
+          metadata["max_tokens"] = value unless metadata["max_tokens"]?
+          metadata["max_completion_tokens"] = value unless metadata["max_completion_tokens"]?
+        end
       end
 
       private def workflow_id_for_chat_body(body : Ocawe::Workflow::AnyHash) : String?
