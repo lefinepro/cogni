@@ -171,7 +171,7 @@
               ExposedPorts = {
                 "4111/tcp" = {};
               };
-              Entrypoint = [ "${ocawe}/bin/ocawecore" ];
+              Entrypoint = [ "/bin/ocawecore" ];
               Cmd = [
                 "--port"
                 "4111"
