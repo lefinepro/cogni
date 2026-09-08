@@ -189,6 +189,10 @@ module Ocawe
           end
         end
       end
+      if value = parsed["max_output_tokens"]?
+        parsed["max_tokens"] = value unless parsed["max_tokens"]?
+        parsed["max_completion_tokens"] = value unless parsed["max_completion_tokens"]?
+      end
       parsed["messages"] = JSON::Any.new(messages)
       parsed.delete("input")
       parsed.to_json
