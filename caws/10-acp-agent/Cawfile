@@ -12,6 +12,11 @@
 settings do
   data.adapter = "memory"
   port = 4111
+
+  # A sender must follow this actor and receive Accept before its messages
+  # can start Codex. Keep HTTP Signature verification enabled as well.
+  federation.signatures_required = true
+  federation.require_follow = true
 end
 
 container do

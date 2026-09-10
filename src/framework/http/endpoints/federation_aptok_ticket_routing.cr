@@ -14,6 +14,11 @@ module ACD
         return if activitypub_follow_response(activity)
         return if activitypub_accept_response(activity)
 
+        unless trusted_inbound_activity?(activity)
+          STDERR.puts "[federation] ignore activity from actor without an active follow"
+          return
+        end
+
         return if process_registered_aptok_inbox_activity(activity)
 
         remote_actor = activity["actor"]?.try(&.as_s?).to_s
@@ -23,6 +28,25 @@ module ACD
                    @federation_kv.get("ocawe:federation:follow:#{remote_actor}").try { |raw| JSON.parse(raw).as_h } || Aptok::JsonMap.new
                  end
         process_polled_activity(follow, activity)
+      end
+
+      private def trusted_inbound_activity?(activity : Aptok::JsonMap) : Bool
+        return true unless @settings.federation.require_follow
+
+        remote_actor = federation_actor_from_node(activity["actor"]?)
+        return false if remote_actor.empty?
+
+        @federation_kv.list("ocawe:federation:follower:").any? do |entry|
+          record = JSON.parse(entry.value).as_h?
+          next false unless record
+          next false unless record.not_nil!["remote_actor"]?.try(&.as_s?) == remote_actor
+          status = record.not_nil!["status"]?.try(&.as_s?).to_s
+          next false unless status.empty? || status == "active" || status == "following"
+          local_actor = record.not_nil!["local_actor"]?.try(&.as_s?).to_s
+          activity_targets_local_actor?(activity, local_actor)
+        rescue
+          false
+        end
       end
 
       private def process_registered_aptok_inbox_activity(activity : Aptok::JsonMap) : Bool

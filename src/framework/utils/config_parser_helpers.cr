@@ -83,6 +83,8 @@ module OcaweCore
             http_timeout = int32_or_nil(fed["s2s_http_timeout_seconds"]?) || federation.s2s_http_timeout_seconds
             signatures_required = bool_or_nil(fed["signatures_required"]?)
             signatures_required = federation.signatures_required if signatures_required.nil?
+            require_follow = bool_or_nil(fed["require_follow"]?)
+            require_follow = federation.require_follow if require_follow.nil?
             local_actor = string_or_nil(fed["local_actor"]?) || federation.local_actor
             local_key_id = string_or_nil(fed["local_key_id"]?) || federation.local_key_id
             local_private_key_path = string_or_nil(fed["local_private_key_path"]?) || federation.local_private_key_path
@@ -97,6 +99,7 @@ module OcaweCore
               s2s_poll_interval_seconds: poll_interval,
               s2s_http_timeout_seconds: http_timeout,
               signatures_required: signatures_required.not_nil!,
+              require_follow: require_follow.not_nil!,
               local_actor: local_actor,
               local_key_id: local_key_id,
               local_private_key_path: local_private_key_path,
@@ -285,6 +288,7 @@ module OcaweCore
             s2s_poll_interval_seconds: federation.s2s_poll_interval_seconds,
             s2s_http_timeout_seconds: federation.s2s_http_timeout_seconds,
             signatures_required: federation.signatures_required,
+            require_follow: federation.require_follow,
             local_actor: local_actor,
             local_key_id: local_key_id,
             local_private_key_path: federation.local_private_key_path,

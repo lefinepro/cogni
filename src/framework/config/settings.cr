@@ -109,6 +109,7 @@ module Ocawe
       getter s2s_poll_interval_seconds : Int32
       getter s2s_http_timeout_seconds : Int32
       getter signatures_required : Bool
+      getter require_follow : Bool
       getter local_actor : String
       getter local_key_id : String
       getter local_private_key_path : String
@@ -133,6 +134,7 @@ module Ocawe
         @s2s_poll_interval_seconds : Int32 = 15,
         @s2s_http_timeout_seconds : Int32 = 10,
         @signatures_required : Bool = true,
+        @require_follow : Bool = false,
         @local_actor : String = "http://127.0.0.1:4111/actors/server",
         @local_key_id : String = "http://127.0.0.1:4111/actors/server#main-key",
         @local_private_key_path : String = "./.ocawe/federation-private.pem",
