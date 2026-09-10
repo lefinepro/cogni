@@ -25,10 +25,10 @@ module Ocawe
           case runtime.downcase
           when "podman"
             ["podman", "build", "-t", tag, context]
-          when "nerdctl"
-            ["nerdctl", "build", "-t", tag, context]
+          when "nerdctl", "nerdctl-user"
+            [runtime, "build", "-t", tag, context]
           else
-            ["docker", "build", "-t", tag, context]
+            [runtime, "build", "-t", tag, context]
           end
 
         status = Process.run(cmd[0], args: cmd[1..-1], output: Process::Redirect::Inherit, error: Process::Redirect::Inherit)

@@ -100,8 +100,8 @@ module Ocawe
     end
 
     class NerdctlRuntime < Runtime
-      def initialize
-        super("nerdctl")
+      def initialize(name : String = "nerdctl")
+        super(name)
       end
 
       def check_availability! : Nil
@@ -113,23 +113,33 @@ module Ocawe
 
       def build_image(dockerfile : String, context : String, tag : String) : Bool
         check_availability!
-        run_command(["nerdctl", "build", "-t", tag, context])
+        run_command([name, "build", "-t", tag, context])
       end
 
       def run_image(image : String, args : Array(String)? = nil) : Bool
         check_availability!
-        command = args ? ["nerdctl", "run", "--rm", image] + args : ["nerdctl", "run", "--rm", image]
+        command = args ? [name, "run", "--rm", image] + args : [name, "run", "--rm", image]
         run_command(command)
       end
 
       def push_image(image : String) : Bool
         check_availability!
-        run_command(["nerdctl", "push", image])
+        run_command([name, "push", image])
       end
 
       def pull_image(image : String) : Bool
         check_availability!
-        run_command(["nerdctl", "pull", image])
+        run_command([name, "pull", image])
+      end
+    end
+
+    # The nerdctl overlay exposes this wrapper when automatic rootless
+    # containerd/BuildKit setup is desired. It has the same image runtime
+    # contract as nerdctl, but is intentionally a separate runtime name so
+    # explicit `nerdctl` configurations remain unchanged.
+    class NerdctlUserRuntime < NerdctlRuntime
+      def initialize
+        super("nerdctl-user")
       end
     end
 
@@ -139,6 +149,7 @@ module Ocawe
         register(DockerRuntime.new)
         register(PodmanRuntime.new)
         register(NerdctlRuntime.new)
+        register(NerdctlUserRuntime.new)
       end
 
       def register(runtime : Runtime) : Nil
@@ -154,6 +165,7 @@ module Ocawe
         register(DockerRuntime.new)
         register(PodmanRuntime.new)
         register(NerdctlRuntime.new)
+        register(NerdctlUserRuntime.new)
       end
     end
 

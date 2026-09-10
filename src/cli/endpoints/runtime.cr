@@ -138,7 +138,7 @@ module OcaweCore
       end
 
       private def detect_runtime(allow_missing : Bool = false) : String
-        ["docker", "podman", "nerdctl"].each do |rt|
+        runtime_candidates.each do |rt|
           return rt if runtime_available?(rt)
         end
         return "docker" if allow_missing
@@ -147,7 +147,16 @@ module OcaweCore
       end
 
       private def container_runtime_available? : Bool
-        ["docker", "podman", "nerdctl"].any? { |rt| runtime_available?(rt) }
+        runtime_candidates.any? { |rt| runtime_available?(rt) }
+      end
+
+      private def runtime_candidates : Array(String)
+        candidates = [] of String
+        if configured = ENV["OCAWE_CONTAINER_RUNTIME"]?.try(&.strip)
+          candidates << configured unless configured.empty?
+        end
+        candidates.concat(["nerdctl-user", "nerdctl", "podman", "docker"])
+        candidates.uniq
       end
 
       private def runtime_available?(runtime : String) : Bool
