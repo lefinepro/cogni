@@ -687,7 +687,12 @@ module OcaweCore
         build_args.concat(["-D", "ocawe_runtime_main"]) if entrypoint == runtime_entry
         build_args.concat(flags)
         build_args.concat(["-o", output])
-        run_nix_command(build_args)
+        # Crystal resolves shard dependencies relative to the project root.
+        # The workflow directory can be a nested Cawfile path, so compiling
+        # from the caller's cwd leaves requires such as `rcl` unavailable.
+        Dir.cd(project_root) do
+          run_nix_command(build_args)
+        end
       end
 
       private def build_runtime_package(output : String) : Bool
