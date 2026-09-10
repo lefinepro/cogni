@@ -121,8 +121,9 @@ class ACD::Kemal::App
 
   def test_extract_ticket_activity_payload(
     activity : Hash(String, JSON::Any),
+    local_actor : String = "",
   ) : NamedTuple(activity_type: String, ticket: Hash(String, JSON::Any))?
-    extract_ticket_activity_payload(activity)
+    extract_ticket_activity_payload(activity, local_actor)
   end
 
   def test_infer_ticket_workflow_activity(

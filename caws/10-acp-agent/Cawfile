@@ -15,7 +15,9 @@ settings do
 end
 
 container do
-  packages = ["codex-acp"]
+  # codex-acp is the agent; openssl lets federation generate its signing key
+  # on first use inside the isolated runtime.
+  packages = ["codex-acp", "openssl"]
   files = ["."]
 end
 

@@ -71,4 +71,30 @@ describe "ACD::Kemal::App federation ticket routing" do
       "http://127.0.0.1:4111/actors/deploy-on-akash"
     ).should eq("http://127.0.0.1:4111/actors/deploy-on-akash")
   end
+
+  it "normalizes a Holos or Mastodon Create(Note) into a local task" do
+    app = ACD::Kemal::App.new(0)
+    activity = JSON.parse(%({
+      "@context":"https://www.w3.org/ns/activitystreams",
+      "id":"https://holos.example/notes/1",
+      "type":"Create",
+      "actor":"https://holos.example/actors/alice",
+      "object":{
+        "id":"https://holos.example/notes/1",
+        "type":"Note",
+        "attributedTo":"https://holos.example/actors/alice",
+        "content":"Please review this project"
+      }
+    })).as_h
+
+    payload = app.test_extract_ticket_activity_payload(
+      activity,
+      "http://127.0.0.1:4111/actors/10-acp-agent"
+    ).not_nil!
+    payload[:activity_type].should eq("Create")
+    payload[:ticket]["type"].as_s.should eq("Ticket")
+    payload[:ticket]["assignee"].as_s.should eq("http://127.0.0.1:4111/actors/10-acp-agent")
+    payload[:ticket]["name"].as_s.should eq("Please review this project")
+    payload[:ticket]["content"].as_s.should eq("Please review this project")
+  end
 end

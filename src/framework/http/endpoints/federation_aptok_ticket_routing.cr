@@ -8,6 +8,12 @@ module ACD
   module Kemal
     class App
       private def process_aptok_inbox_activity(activity : Aptok::JsonMap) : Nil
+        # Follow and Accept are federation protocol messages, not workflow
+        # tasks. Handle them before the registered Cawfile inbox function so a
+        # signed follow cannot accidentally start the ACP agent.
+        return if activitypub_follow_response(activity)
+        return if activitypub_accept_response(activity)
+
         return if process_registered_aptok_inbox_activity(activity)
 
         remote_actor = activity["actor"]?.try(&.as_s?).to_s
@@ -55,6 +61,7 @@ module ACD
       private def process_polled_activity(follow : Hash(String, JSON::Any), activity : Hash(String, JSON::Any)) : Bool
         activity_type = activity["type"]?.try(&.as_s?).to_s
         remote_actor = follow["remote_actor"]?.try(&.as_s?).to_s
+        remote_actor = activity["actor"]?.try(&.as_s?).to_s if remote_actor.empty?
         status = follow["status"]?.try(&.as_s?).to_s
         local_actor = follow["local_actor"]?.try(&.as_s?).to_s
         local_actor = @settings.federation.local_actor if local_actor.empty?
@@ -73,7 +80,7 @@ module ACD
           STDERR.puts "[federation] ignore activity addressed to another solver"
           return true
         end
-        ticket_payload = extract_ticket_activity_payload(activity)
+        ticket_payload = extract_ticket_activity_payload(activity, local_actor)
         unless ticket_payload
           STDERR.puts "[federation] skip activity because no Ticket payload"
           return false
@@ -126,13 +133,33 @@ module ACD
         "#{local_domain}/actors/#{workflow_id}"
       end
 
-      private def extract_ticket_activity_payload(activity : Hash(String, JSON::Any)) : NamedTuple(activity_type: String, ticket: Hash(String, JSON::Any))?
+      private def extract_ticket_activity_payload(activity : Hash(String, JSON::Any), local_actor : String = "") : NamedTuple(activity_type: String, ticket: Hash(String, JSON::Any))?
         activity_type = activity["type"]?.try(&.as_s?).to_s.strip
+        return {activity_type: "Create", ticket: note_as_ticket(activity, local_actor)} if activity_type == "Note"
         return {activity_type: activity_type, ticket: activity} if activity_type == "Ticket"
         return nil unless activity_type == "Create" || activity_type == "Offer"
         ticket = activity["object"]?.try(&.as_h?) || {} of String => JSON::Any
+        if ticket["type"]?.try(&.as_s?).to_s.strip == "Note"
+          return {activity_type: activity_type, ticket: note_as_ticket(ticket, local_actor)}
+        end
         return nil unless ticket["type"]?.try(&.as_s?).to_s.strip.downcase == "ticket"
         {activity_type: activity_type, ticket: ticket}
+      end
+
+      # Holos, Mastodon and other general ActivityPub clients send
+      # Create(Note), not ForgeFed Ticket. Normalize that interoperable wire
+      # shape into the existing task route while preserving the original note
+      # id, author and content for the ACP input and reply correlation.
+      private def note_as_ticket(note : Hash(String, JSON::Any), local_actor : String) : Hash(String, JSON::Any)
+        ticket = note.dup
+        ticket["type"] = JSON.parse("Ticket".to_json)
+        ticket["assignee"] = JSON.parse(local_actor.to_json) unless local_actor.strip.empty?
+
+        task = ticket["name"]?.try(&.as_s?).to_s.strip
+        task = ticket["summary"]?.try(&.as_s?).to_s.strip if task.empty?
+        task = ticket["content"]?.try(&.as_s?).to_s.strip if task.empty?
+        ticket["name"] = JSON.parse(task.to_json) unless task.empty?
+        ticket
       end
 
       private def ticket_has_offer_attachment?(ticket : Hash(String, JSON::Any)) : Bool

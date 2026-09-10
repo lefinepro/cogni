@@ -136,7 +136,7 @@ module Api
           supported = %w(
             Create Update Delete Follow Accept Reject Add Remove
             Like Announce Undo Block Flag Offer Resolve Apply
-            Grant Revoke
+            Grant Revoke Note
           )
           unless supported.includes?(type_str)
             errors << "unsupported inbox activity type: #{type_str}"
