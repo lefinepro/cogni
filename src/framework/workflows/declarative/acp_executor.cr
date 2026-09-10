@@ -3,6 +3,24 @@ require "../../acp"
 
 module Ocawe
   module Workflow
+    # Normalizes the small set of ACP runtime shorthands accepted by exec.
+    #
+    # The runtime is deliberately agent-agnostic. Codex, Claude Code, and
+    # other ACP agents use the same runtime; only the command and its config
+    # differ.
+    class ACPRuntime
+      def self.normalize(raw : JSON::Any) : JSON::Any
+        if command = raw.as_s?
+          return JSON.parse({"command" => command}.to_json)
+        end
+
+        return raw if raw.as_h?
+        return JSON.parse("{}") if raw.as_bool? == true
+
+        raise "ACP runtime must be an object, command string, or true"
+      end
+    end
+
     # ACP executor - runs an external binary via the Agent Client Protocol
     #
     # Usage in Cawfile:

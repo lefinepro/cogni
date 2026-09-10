@@ -37,10 +37,13 @@ module Ocawe
 
           raise "exec requires runtime for non-mcp refs: #{ref}" unless runtime
 
-          # Check for ACP runtime
+          # ACP is the universal external-agent runtime. The selected agent
+          # is configuration (command/args/env), not a framework runtime type.
           if acp_config = runtime["acp"]?
+            config = ACPRuntime.normalize(acp_config)
             placement = runtime["placement"]?.try(&.as_h?)
-            return exec_acp(ref, ctx, acp_config, placement, env, workflow_root, workspace)
+            placement ||= config.as_h?.try { |values| values["placement"]?.try(&.as_h?) }
+            return exec_acp(ref, ctx, config, placement, env, workflow_root, workspace)
           end
 
           if runtime.has_key?("git+https")

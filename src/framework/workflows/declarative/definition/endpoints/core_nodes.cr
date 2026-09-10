@@ -25,6 +25,31 @@ module Ocawe
         ))
       end
 
+      # Cawfiles commonly use native Crystal literals such as
+      # {"acp" => true}. Convert those dynamic values at the DSL boundary so
+      # callers do not need to wrap every value in JSON::Any themselves.
+      def exec(
+        ref : String,
+        runtime : Hash(String, T),
+        env : AnyHash? = nil,
+        workflow_root : String? = nil,
+        attributes : AnyHash? = nil,
+        workspace : AnyHash? = nil,
+        input_schema : Ocawe::Workflows::DSL::Validator? = nil,
+        output_schema : Ocawe::Workflows::DSL::Validator? = nil
+      ) : self forall T
+        exec(
+          ref,
+          runtime: JSON.parse(runtime.to_json).as_h,
+          env: env,
+          workflow_root: workflow_root,
+          attributes: attributes,
+          workspace: workspace,
+          input_schema: input_schema,
+          output_schema: output_schema,
+        )
+      end
+
       # Low-level chaining for explicit workflow nodes (used by control-flow internals).
       def step(node : WorkflowNode) : self
         append_node(node)

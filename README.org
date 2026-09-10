@@ -25,7 +25,7 @@ packaging live outside this repository, primarily in =sireng/= and the root
 - =@[Service]= workflows that start with the runtime for tunnels, daemons, and watchers
 - Agent + skill + tool discovery from workflow directories
 - Voice and RAG patterns through workflow DSL
-- ACP execution for external agents through =exec ..., runtime: {acp: {...}}=
+- Universal ACP execution for external agents through =exec ..., runtime: {"acp" => {...}}=
 - Schema validation and guardrails in agent/workflow execution
 - OpenAI-compatible chat completions, retrieval, and async task endpoints
 
@@ -211,11 +211,16 @@ build.
 ocawe build planner --remote build-host
 ocawe build --remote build-host .
 ocawe build planner --remote build-host --manager nerdctl
+ocawe build weather --remote build-host --start-mode --deploy --namespace lefine
 ocawe build planner --remote build-host --dry-run
 #+end_src
 
 The remote build never changes the active runtime until the image and binary
 have both completed successfully. Deploy the promoted version separately:
+
+Use =--start-mode= for a minimal production image. It embeds the compiled
+workflow runtime and starts only the lightweight =/run=, =/stop/:id=, and
+=/metrics= API; addon-managed deployments receive no legacy =dev= arguments.
 
 #+begin_src bash
 cd sireng
@@ -405,8 +410,7 @@ workflow "agent-tunnel" do
 end
 
 workflow "codex-acp" do
-  exec "codex",
-    runtime: {acp: {command: "codex", args: ["--server"]}}
+  exec "codex-acp", runtime: {"acp" => true}
 end
 
 workflow "remote-acp" do
@@ -421,12 +425,12 @@ end
 *Key directives:*
 - =settings do ... end= — runtime config (port, datasets adapter, federation, telemetry)
 - =@[Service]= — workflow starts with =ocawe up= and restarts on runtime reload
-- =ocawe start PATH= — optimized Cawfile runtime with the minimal =/run=, =/stop/:id=, and =/metrics= API
+- =ocawe start PATH= — optimized Cawfile container runtime with the minimal =/run=, =/stop/:id=, and =/metrics= API
 - =ocawe stop PATH= — stops the container or local server started by =ocawe start=
 - =@[Model("provider")]= — default model for the workflow
 - =container do ... end= — bundle-level container packaging; =packages= accepts Nix package names, flake refs, and path refs, while optional =files= selects what to copy into =/app=
 - =@[Validate(Input, Output)]= — input/output type validation
-- =exec "...", runtime: {acp: {...}}= — run an external ACP-compatible agent
+- =exec "...", runtime: {"acp" => {...}}= — run any external ACP-compatible agent
 - =exec "github.com/org/repo/path", runtime: {"git+https"}= — clone or fast-forward pull a remote Cawfile reference over HTTPS, compile it into a cached single =ocawecore= binary, then run the selected workflow through that binary
 - =exec "git+https://github.com/org/repo/path", runtime: {"git+https"}= — explicit HTTPS form for the same remote Cawfile behavior
 - =exec "git+ssh://github.com/org/repo/path/workflow", runtime: {"git+ssh"}= — clone or fast-forward pull a remote Cawfile reference over SSH, compile it into a cached single =ocawecore= binary, then run the selected workflow through that binary

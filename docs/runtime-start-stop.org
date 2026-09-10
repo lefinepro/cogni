@@ -18,9 +18,9 @@ flowchart TD
   B --> C{Crystal loader code?}
   C -->|no| D[Use packaged ocawecore]
   C -->|yes| E[Precompile workflow runtime]
-  D --> F[Create runtime.tar.zst with zstd]
+  D --> F[Build minimal Nix-rootfs container]
   E --> F
-  F --> G[Build or update container]
+  F --> G[Copy Cawfile and workflow assets]
   G --> H[Start ocawecore --start-mode]
   H --> I[Load workflows at runtime]
   I --> J{MastraAPI declared?}
@@ -88,9 +88,10 @@ registry files, or relevant framework sources change. A future implementation
 should replace process-id-only temporary names with a source fingerprint and
 clean stale generated binaries after successful startup.
 
-** Zstandard dependency
+** Container-first start
 
-~ocawe start~ requires the ~zstd~ executable and writes
-~build/<workflow-id>.runtime.tar.zst~. The archive is a portable runtime
-artifact for transfer and inspection; the container builder still creates the
-runtime image from its normal build context.
+~ocawe start~ always builds a minimal Nix-rootfs container for a Cawfile,
+including workflows, agents, skills, tools, and the runtime closure. A
+~container do~ block is only needed when the workflow needs extra packages,
+files, or a custom base image. If no container runtime is available, start
+falls back to the local process path.

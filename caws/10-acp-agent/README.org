@@ -25,10 +25,10 @@ See: https://agentclientprotocol.com/protocol/v1/overview
 ** Basic Syntax
 
 #+begin_src crystal
-exec "codex", runtime: {"acp"}
+exec "codex-acp", runtime: {"acp" => true}
 #+end_src
 
-This runs the =codex= binary (expected in PATH or container) and communicates with it via ACP protocol.
+This runs the configured ACP command (Codex in the example) and communicates with it via ACP protocol.
 
 ** With Container
 
@@ -47,7 +47,7 @@ end
 
 @[Validate(Input, Output)]
 workflow "acp-example" do
-  exec "codex", runtime: {"acp"}
+  exec "codex-acp", runtime: {"acp" => true}
 end
 #+end_src
 
@@ -114,6 +114,9 @@ The ACP executor returns:
 - *qwen-code*: Qwen Code agent (via =container do=)
 - *custom*: Any binary implementing ACP stdio transport
 
+The runtime is universal: replace =codex-acp= with another ACP-compatible
+command such as =claude-code-acp= and keep the same =runtime: {"acp" => true}= shape.
+
 * Container Installation
 
 Packages are installed automatically via the =container do= block:
@@ -125,7 +128,7 @@ end
 
 @[Validate(Input, Output)]
 workflow "acp-example" do
-  exec "codex", runtime: {"acp"}
+  exec "codex-acp", runtime: {"acp" => true}
 end
 #+end_src
 

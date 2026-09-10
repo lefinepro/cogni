@@ -333,6 +333,33 @@ module Ocawe::Builder
         end
       end
 
+      it "copies a plain Cawfile into the minimal rootfs without package config" do
+        dir = File.tempname("nixbuilder_simple_workflow_test")
+        Dir.mkdir_p(dir)
+        begin
+          bin_path = File.join(dir, "ocawecore")
+          File.write(bin_path, "fake binary")
+          File.write(File.join(dir, "Cawfile"), "workflow \"simple\" do\nend\n")
+
+          test_builder = TestNixBuilder.new
+          test_builder.build(
+            bin_path,
+            tag: "simple:test",
+            context_dir: dir,
+            runtime: "docker",
+            image: nil,
+            packages: [] of String,
+            files: [] of String
+          )
+
+          context = File.join(dir, "build", "container")
+          File.file?(File.join(context, "rootfs", "app", "ocawecore")).should be_true
+          File.file?(File.join(context, "rootfs", "app", "Cawfile")).should be_true
+        ensure
+          FileUtils.rm_rf(dir)
+        end
+      end
+
       it "copies root .caw config even though hidden files are excluded by default" do
         dir = File.tempname("nixbuilder_test")
         Dir.mkdir_p(dir)

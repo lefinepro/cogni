@@ -29,9 +29,9 @@ describe OcaweCore::CLI::Main do
     output.includes?("Unknown command").should eq(true)
   end
 
-  it "does not mention container configuration in help" do
+  it "describes the default container runtime without exposing Cawfile configuration" do
     output = CliWorkflowCommandSpec.cli_output("--help")
-    output.includes?("container").should eq(false)
+    output.includes?("minimal Cawfile container").should eq(true)
     output.includes?("container do").should eq(false)
   end
 

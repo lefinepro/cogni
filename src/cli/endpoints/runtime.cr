@@ -62,6 +62,7 @@ module OcaweCore
         dry_run = false
         deploy = false
         namespace = "default"
+        start_mode = false
         release = true
         static = false
         output = runtime_bin
@@ -73,6 +74,7 @@ module OcaweCore
           parser.on("--dry-run", "Show the remote build without executing it") { dry_run = true }
           parser.on("--deploy", "Update the matching Kubernetes deployment after promotion") { deploy = true }
           parser.on("--namespace NAME", "Kubernetes namespace for --deploy (default: default)") { |value| namespace = value }
+          parser.on("--start-mode", "Build a minimal /run,/stop,/metrics runtime image") { start_mode = true }
           parser.on("--release", "Build release binary (default)") { release = true }
           parser.on("--debug", "Build non-release binary") { release = false }
           parser.on("--static", "Build static binary") { static = true }
@@ -93,6 +95,7 @@ module OcaweCore
               base_image: base_image,
               deploy: deploy,
               namespace: namespace,
+              start_mode: start_mode,
               dry_run: dry_run
             )
           )
@@ -241,11 +244,12 @@ module OcaweCore
         end
 
         bundle = ACD::Discovery::CawfileLoader.load(workflows_root, "root")
-        if bundle && bundle.container && bundle.container.not_nil!.configured? && container_runtime_available?
-          stop_container(detect_runtime, container_name_for_bundle(bundle))
-        else
-          stop_local_runtime(workflows_root)
+        if bundle && container_runtime_available?
+          stopped = stop_container(detect_runtime, container_name_for_bundle(bundle))
+          return if stopped
         end
+
+        stop_local_runtime(workflows_root)
       end
 
       private def run_server(args : Array(String), dev_mode : Bool, start_mode : Bool = false) : Nil
@@ -282,6 +286,20 @@ module OcaweCore
           exit(1)
         end
 
+        # `start` is the small, container-first lifecycle. A simple workflow
+        # should not need a redundant `container do` block just to get process
+        # isolation. Use the Nix rootfs builder even for an empty/default
+        # configuration so the Cawfile and workflow assets enter the image.
+        if start_mode
+          configured = container_config
+          container_config = ACD::Discovery::CawfileContainer.new(
+            mode: ACD::Discovery::ContainerMode::Nix,
+            packages: configured.try(&.packages) || [] of String,
+            image: configured.try(&.image),
+            files: configured.try(&.files) || [] of String,
+          )
+        end
+
         if dev_mode
           Dir.cd(workflows_root) do
             abort_unless_success(build_runtime(release: false, output: runtime_bin))
@@ -301,8 +319,6 @@ module OcaweCore
         else
           abort_unless_success(ensure_runtime_binary(runtime_bin))
         end
-
-        package_start_runtime(workflows_root, runtime_bin, cawfile_bundle.not_nil!) if start_mode
 
         container_tag = nil.as(String?)
 
@@ -384,7 +400,7 @@ module OcaweCore
         end
       end
 
-      private def stop_container(runtime : String, container_name : String) : Nil
+      private def stop_container(runtime : String, container_name : String) : Bool
         output = IO::Memory.new
         status = Process.run(
           runtime,
@@ -393,8 +409,7 @@ module OcaweCore
           error: Process::Redirect::Close,
         )
         unless status.success? && !output.to_s.strip.empty?
-          puts "[ocawe] container not running: #{container_name}"
-          return
+          return false
         end
 
         stopped = Process.run(
@@ -411,84 +426,7 @@ module OcaweCore
         )
         abort_unless_success(stopped)
         puts "[ocawe] stopped container: #{container_name}"
-      end
-
-      private def package_start_runtime(
-        workflows_root : String,
-        runtime_binary : String,
-        bundle : ACD::Discovery::CawfileBundle,
-      ) : String
-        zstd_status = Process.run(
-          "zstd",
-          args: ["--version"],
-          output: Process::Redirect::Close,
-          error: Process::Redirect::Close,
-        )
-        unless zstd_status.success?
-          STDERR.puts "Error: zstd is required by `ocawe start`"
-          exit(1)
-        end
-
-        package_root = File.join(Dir.tempdir, "ocawe-start-package-#{Process.pid}")
-        build_root = File.join(workflows_root, "build")
-        archive_base = File.join(build_root, "#{safe_runtime_name(bundle.id)}.runtime")
-        tar_path = "#{archive_base}.tar"
-        archive_path = "#{tar_path}.zst"
-
-        FileUtils.rm_rf(package_root)
-        FileUtils.mkdir_p(package_root)
-        FileUtils.mkdir_p(build_root)
-
-        FileUtils.cp(runtime_binary, File.join(package_root, "ocawecore"))
-        cawfile_path = ACD::Discovery::CawfileLoader.find_cawfile(workflows_root)
-        if cawfile_path
-          FileUtils.cp(cawfile_path, File.join(package_root, File.basename(cawfile_path)))
-        end
-
-        ["agents", "skills", "tools"].each do |entry|
-          source = File.join(workflows_root, entry)
-          FileUtils.cp_r(source, File.join(package_root, entry)) if File.exists?(source)
-        end
-
-        if container = bundle.container
-          container.files.each do |entry|
-            next if ["agents", "skills", "tools"].includes?(entry)
-            source = File.join(workflows_root, entry)
-            next unless File.exists?(source)
-            destination = File.join(package_root, entry)
-            FileUtils.mkdir_p(File.dirname(destination))
-            FileUtils.cp_r(source, destination)
-          end
-        end
-
-        File.delete(tar_path) if File.exists?(tar_path)
-        File.delete(archive_path) if File.exists?(archive_path)
-
-        tar_status = Process.run(
-          "tar",
-          args: ["-C", package_root, "-cf", tar_path, "."],
-          output: Process::Redirect::Close,
-          error: Process::Redirect::Inherit,
-        )
-        abort_unless_success(tar_status.success?)
-
-        zstd_status = Process.run(
-          "zstd",
-          args: ["-q", "-T0", "-f", tar_path, "-o", archive_path],
-          output: Process::Redirect::Close,
-          error: Process::Redirect::Inherit,
-        )
-        abort_unless_success(zstd_status.success?)
-        File.delete(tar_path)
-        puts "[ocawe] packaged runtime: #{archive_path}"
-        archive_path
-      ensure
-        FileUtils.rm_rf(package_root) if package_root
-      end
-
-      private def safe_runtime_name(value : String) : String
-        normalized = value.gsub(/[^a-zA-Z0-9_.-]/, "-")
-        normalized.empty? ? "ocawe" : normalized
+        true
       end
 
       private def stop_local_runtime(workflows_root : String) : Nil
@@ -664,11 +602,10 @@ module OcaweCore
         end
 
         cawfile_bundle = ACD::Discovery::CawfileLoader.load(workflows_root, "root")
-        unless cawfile_bundle && cawfile_bundle.container
-          STDERR.puts "Error: Cawfile at #{cawfile} has no `container do` configuration"
+        unless cawfile_bundle
+          STDERR.puts "Error: unable to load Cawfile at #{cawfile}"
           exit(1)
         end
-
         container_name_for_bundle(cawfile_bundle)
       end
 
