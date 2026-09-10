@@ -102,9 +102,10 @@ module Ocawe
           "ENV SSL_CERT_FILE=\"/etc/ssl/certs/ca-bundle.crt\"",
           "WORKDIR /app",
           "EXPOSE 4111",
-          # Use the loader exposed in /usr/lib so the generated image does not
-          # depend on the base image's dynamic linker.
-          "ENTRYPOINT [\"/usr/lib/ld-linux-x86-64.so.2\", \"--library-path\", \"/usr/lib:/lib\", \"/app/ocawecore\"]",
+          # Execute the unwrapped ELF directly. Its Nix interpreter and
+          # RUNPATH select one coherent runtime closure without depending on
+          # a shell that may not exist in a scratch rootfs.
+          "ENTRYPOINT [\"/app/ocawecore\"]",
           "CMD [\"--port\", \"4111\"]",
         ]
         lines.join("\n")
@@ -193,7 +194,11 @@ module Ocawe
         name = File.basename(source)
         destination = File.join(rootfs, "usr", "lib", name)
         Dir.mkdir_p(File.dirname(destination))
-        File.delete(destination) if File.exists?(destination) || File.symlink?(destination)
+        # Keep the first library selected from the runtime closure.  Tools
+        # copied later can depend on another glibc revision; replacing libc
+        # siblings one by one creates an ABI-mixed image (for example libc
+        # 2.40 with libdl 2.42).
+        return if File.exists?(destination) || File.symlink?(destination)
         File.symlink(source, destination)
       end
 
@@ -217,8 +222,7 @@ module Ocawe
                          loader
                        end
         image_loader = "/#{image_loader}" unless image_loader.starts_with?("/")
-        loader_lib = File.dirname(image_loader).sub(/\/lib64$/, "/lib")
-        script = "#!/bin/sh\nexec #{image_loader} --library-path /usr/lib:/lib:#{loader_lib} /app/ocawecore \"$@\"\n"
+        script = "#!/bin/sh\nexec #{image_loader} /app/ocawecore \"$@\"\n"
         destination = File.join(rootfs, "app", "ocawe-entrypoint.sh")
         File.write(destination, script)
         File.chmod(destination, 0o755)

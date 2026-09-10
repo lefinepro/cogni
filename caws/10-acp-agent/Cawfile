@@ -4,8 +4,8 @@
 # ACP agents communicate via JSON-RPC over stdio.
 #
 # Usage:
-#   exec "codex-acp", runtime: {"acp" => true}
-#   exec "claude-code-acp", runtime: {"acp" => true}
+#   exec "codex-acp", runtime: {acp: true}
+#   exec "claude-code-acp", runtime: {acp: true}
 #
 # This workflow also exposes itself as an ACP agent via Api::ACP::Agent
 
@@ -31,5 +31,5 @@ end
 
 @[Validate(Input, Output)]
 workflow "10-acp-agent" do
-  exec "codex-acp", runtime: {"acp" => true}
+  exec "codex-acp", runtime: {acp: true}
 end

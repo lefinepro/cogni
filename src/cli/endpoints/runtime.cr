@@ -369,6 +369,7 @@ module OcaweCore
               effective_port,
               container_workdir(dev_mode),
               runtime_args,
+              detached: detached,
               mount_workflows_root: dev_mode ? workflows_root : nil
             )
           else
@@ -383,7 +384,7 @@ module OcaweCore
           # Spawn the runtime as an independent background process. Previously this
           # used the now-unsupported `Process.fork`; spawning directly avoids the
           # deprecation and records the actual runtime PID (so `kill <pid>` works).
-          runtime = spawn_runtime(runtime_command, runtime_bin, runtime_args, workflows_root)
+          runtime = spawn_runtime(runtime_command, runtime_bin, runtime_args, workflows_root, detached: true)
           if start_mode && runtime_command
             puts "[ocawe] started container runtime in background (port #{port || DEFAULT_PORT})"
           else
@@ -396,7 +397,7 @@ module OcaweCore
           puts "[ocawe] logs: ocawe #{start_mode ? "start" : "up"} --follow"
           puts "[ocawe] stop: #{start_mode ? "ocawe stop" : "kill #{runtime.pid}"}"
         else
-          runtime = spawn_runtime(runtime_command, runtime_bin, runtime_args, workflows_root)
+          runtime = spawn_runtime(runtime_command, runtime_bin, runtime_args, workflows_root, detached: false)
           Signal::INT.trap do
             terminate(runtime)
             exit(0)
@@ -630,10 +631,14 @@ module OcaweCore
         port : Int32,
         workdir : String,
         runtime_args : Array(String),
+        detached : Bool = false,
         mount_workflows_root : String? = nil,
       ) : String
         cleanup = [runtime, "rm", "-f", container_name].map { |part| shell_quote(part) }.join(" ")
-        command = [runtime, "run", "--name", container_name, "--rm"]
+        command = [runtime, "run"]
+        command << "-d" if detached
+        command << "--rm" unless detached
+        command.concat(["--name", container_name])
         command.concat(ContainerCredentials.arguments(ENV.to_h))
         command.concat(ContainerFederationEnvironment.arguments(ENV.to_h))
         if mount = mount_workflows_root
@@ -851,13 +856,17 @@ module OcaweCore
         Process.run("sh", args: ["-c", command], output: Process::Redirect::Close, error: Process::Redirect::Close).success?
       end
 
-      private def spawn_cmd(command : String) : Process
-        Process.new("bash", args: ["-c", command], input: Process::Redirect::Close, output: Process::Redirect::Inherit, error: Process::Redirect::Inherit)
+      private def spawn_cmd(command : String, detached : Bool = false) : Process
+        if detached
+          Process.new("setsid", args: ["bash", "-c", command], input: Process::Redirect::Close, output: Process::Redirect::Inherit, error: Process::Redirect::Inherit)
+        else
+          Process.new("bash", args: ["-c", command], input: Process::Redirect::Close, output: Process::Redirect::Inherit, error: Process::Redirect::Inherit)
+        end
       end
 
-      private def spawn_runtime(command : String?, binary : String, args : Array(String), chdir : String) : Process
+      private def spawn_runtime(command : String?, binary : String, args : Array(String), chdir : String, detached : Bool) : Process
         if command
-          spawn_cmd(command)
+          spawn_cmd(command, detached: detached)
         else
           Process.new(binary, args: args, chdir: chdir, input: Process::Redirect::Close, output: Process::Redirect::Inherit, error: Process::Redirect::Inherit)
         end

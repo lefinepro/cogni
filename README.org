@@ -25,7 +25,7 @@ packaging live outside this repository, primarily in =sireng/= and the root
 - =@[Service]= workflows that start with the runtime for tunnels, daemons, and watchers
 - Agent + skill + tool discovery from workflow directories
 - Voice and RAG patterns through workflow DSL
-- Universal ACP execution for external agents through =exec ..., runtime: {"acp" => {...}}=
+- Universal ACP execution for external agents through =exec ..., runtime: {acp: {...}}=
 - Schema validation and guardrails in agent/workflow execution
 - OpenAI-compatible chat completions, retrieval, and async task endpoints
 
@@ -410,7 +410,7 @@ workflow "agent-tunnel" do
 end
 
 workflow "codex-acp" do
-  exec "codex-acp", runtime: {"acp" => true}
+  exec "codex-acp", runtime: {acp: true}
 end
 
 workflow "remote-acp" do
@@ -430,7 +430,7 @@ end
 - =@[Model("provider")]= — default model for the workflow
 - =container do ... end= — bundle-level container packaging; =packages= accepts Nix package names, flake refs, and path refs, while optional =files= selects what to copy into =/app=
 - =@[Validate(Input, Output)]= — input/output type validation
-- =exec "...", runtime: {"acp" => {...}}= — run any external ACP-compatible agent
+- =exec "...", runtime: {acp: {...}}= — run any external ACP-compatible agent
 - =exec "github.com/org/repo/path", runtime: {"git+https"}= — clone or fast-forward pull a remote Cawfile reference over HTTPS, compile it into a cached single =ocawecore= binary, then run the selected workflow through that binary
 - =exec "git+https://github.com/org/repo/path", runtime: {"git+https"}= — explicit HTTPS form for the same remote Cawfile behavior
 - =exec "git+ssh://github.com/org/repo/path/workflow", runtime: {"git+ssh"}= — clone or fast-forward pull a remote Cawfile reference over SSH, compile it into a cached single =ocawecore= binary, then run the selected workflow through that binary
