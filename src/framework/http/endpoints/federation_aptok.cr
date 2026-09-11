@@ -1,4 +1,5 @@
 require "aptok"
+require "uri"
 
 module ACD
   module Kemal
@@ -173,12 +174,21 @@ module ACD
         # `document_get_provider` is configured, otherwise it keeps the strict
         # default loader that refuses private/loopback URLs.
         allow_private_address = @settings.federation.allow_private_address
+        local_key = local_actor_key_pair(@settings.federation.local_actor)
+        document_loader = if local_key
+                            Aptok::Remote.authenticated_document_loader(
+                              local_key,
+                              allow_private_address: allow_private_address
+                            )
+                          else
+                            Aptok::Remote.default_document_loader(allow_private_address: allow_private_address)
+                          end
         federation = Aptok::Federation.create(
           federation_origin,
           kv: @federation_kv,
           inbox_queue: queue,
           outbox_queue: queue,
-          document_loader: Aptok::Remote.default_document_loader(allow_private_address: allow_private_address),
+          document_loader: document_loader,
           allow_private_address: allow_private_address,
           manually_start_queue: true
         )
@@ -270,15 +280,19 @@ module ACD
           ctx.get_inbox_uri(workflow_id),
           ctx.get_outbox_uri(workflow_id),
           name: ENV["OCAWE_FEDERATION_ACTOR_NAME"]? || workflow_id,
+          followers: "#{actor_uri}/followers",
+          following: "#{actor_uri}/following",
           shared_inbox: "#{ctx.origin}/inbox",
           alias_uri: ENV["OCAWE_FEDERATION_ALIAS_URI"]?,
           public_key: public_key
         )
-        if public_key
-          if key_id = public_key["id"]?.try(&.as_s?)
-            actor["assertionMethod"] = JSON.parse([key_id].to_json)
-          end
-        end
+        # Keep the legacy RSA key in `publicKey`, which is the format Mastodon
+        # uses for HTTP Signatures. `assertionMethod` is reserved for FEP-521a
+        # data-integrity keys and must not point at a legacy RSA key.
+        actor["@context"] = JSON.parse([
+          Aptok::ACTIVITYSTREAMS_CONTEXT,
+          "https://w3id.org/security/v1",
+        ].to_json)
         decorate_local_actor_document(actor)
         actor
       end
@@ -463,7 +477,58 @@ module ACD
           "published" => now,
         }.to_json).as_h
         append_aptok_outbox_event(local_actor, accept, "outbox-accept-#{Random::Secure.hex(12)}")
+        deliver_aptok_follow_accept(activity, accept, local_actor, remote_actor)
         accept
+      end
+
+      private def deliver_aptok_follow_accept(
+        follow : Hash(String, JSON::Any),
+        accept : Hash(String, JSON::Any),
+        local_actor : String,
+        remote_actor : String,
+      ) : Nil
+        spawn do
+          begin
+            remote_inbox = follow["actor"]?.try(&.as_h?).try(&.["inbox"]?.try(&.as_s?)).to_s
+            remote_shared_inbox = follow["actor"]?.try(&.as_h?).try do |actor|
+              actor["endpoints"]?.try(&.as_h?).try(&.["sharedInbox"]?.try(&.as_s?))
+            end.to_s
+            remote_inbox = remote_shared_inbox if remote_inbox.empty? && !remote_shared_inbox.empty?
+
+            if remote_inbox.empty?
+              begin
+                actor = aptok_federation.create_context.lookup_object(
+                  remote_actor,
+                  Aptok::LookupObjectOptions.new(cross_origin: "trust")
+                )
+                remote_inbox = actor.try(&.["inbox"]?.try(&.as_s?)).to_s
+                remote_inbox = actor.try(&.["endpoints"]?.try(&.as_h?).try(&.["sharedInbox"]?.try(&.as_s?))).to_s if remote_inbox.empty?
+              rescue ex
+                STDERR.puts "[federation] follower inbox lookup failed for #{remote_actor}: #{ex.message || ex.class.name}"
+              end
+            end
+
+            # Mastodon-compatible servers expose a shared inbox at the origin
+            # even when their actor document is unavailable to this server.
+            if remote_inbox.empty?
+              uri = URI.parse(remote_actor)
+              origin = "#{uri.scheme}://#{uri.host}"
+              origin += ":#{uri.port}" if uri.port && ![80, 443].includes?(uri.port)
+              remote_inbox = "#{origin}/inbox"
+            end
+
+            delivery = Aptok::DeliveryConfig.new(
+              inbox: remote_inbox,
+              actor: local_actor,
+              target: remote_actor,
+              actor_ids: [remote_actor]
+            )
+            Aptok::Transport.new.deliver!(delivery, accept, local_actor_key_pair(local_actor))
+            STDERR.puts "[federation] sent Accept for #{remote_actor} -> #{remote_inbox}"
+          rescue ex
+            STDERR.puts "[federation] Accept delivery failed for #{remote_actor}: #{ex.message || ex.class.name}"
+          end
+        end
       end
 
       private def activitypub_accept_response(activity : Hash(String, JSON::Any)) : Bool

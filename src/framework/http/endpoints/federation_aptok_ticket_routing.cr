@@ -35,6 +35,8 @@ module ACD
 
         remote_actor = federation_actor_from_node(activity["actor"]?)
         return false if remote_actor.empty?
+        trusted_actors = @settings.federation.trusted_actors
+        return false unless trusted_actors.empty? || trusted_actors.includes?(remote_actor)
 
         @federation_kv.list("ocawe:federation:follower:").any? do |entry|
           record = JSON.parse(entry.value).as_h?

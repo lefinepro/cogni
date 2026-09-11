@@ -79,6 +79,8 @@ module OcaweCore
           if fed = fed_raw.as?(Hash(String, RCL::Value))
             auto_subscribe = parse_string_list_value(fed["auto_subscribe"]?)
             auto_subscribe = federation.auto_subscribe if auto_subscribe.empty?
+            trusted_actors = parse_string_list_value(fed["trusted_actors"]?)
+            trusted_actors = federation.trusted_actors if trusted_actors.empty?
             poll_interval = int32_or_nil(fed["s2s_poll_interval_seconds"]?) || federation.s2s_poll_interval_seconds
             http_timeout = int32_or_nil(fed["s2s_http_timeout_seconds"]?) || federation.s2s_http_timeout_seconds
             signatures_required = bool_or_nil(fed["signatures_required"]?)
@@ -96,6 +98,7 @@ module OcaweCore
             internal_peers = federation.internal_peers if internal_peers.empty?
             federation = Ocawe::Config::FederationSettings.new(
               auto_subscribe: auto_subscribe,
+              trusted_actors: trusted_actors,
               s2s_poll_interval_seconds: poll_interval,
               s2s_http_timeout_seconds: http_timeout,
               signatures_required: signatures_required.not_nil!,
@@ -285,6 +288,7 @@ module OcaweCore
           datasets: base.datasets,
           federation: Ocawe::Config::FederationSettings.new(
             auto_subscribe: federation.auto_subscribe,
+            trusted_actors: federation.trusted_actors,
             s2s_poll_interval_seconds: federation.s2s_poll_interval_seconds,
             s2s_http_timeout_seconds: federation.s2s_http_timeout_seconds,
             signatures_required: federation.signatures_required,

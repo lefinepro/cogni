@@ -106,6 +106,9 @@ module Ocawe
 
     struct FederationSettings
       getter auto_subscribe : Array(String)
+      # Exact remote actor URLs allowed to submit inbound federation tasks.
+      # An empty list keeps the follow-only compatibility mode.
+      getter trusted_actors : Array(String)
       getter s2s_poll_interval_seconds : Int32
       getter s2s_http_timeout_seconds : Int32
       getter signatures_required : Bool
@@ -131,6 +134,7 @@ module Ocawe
 
       def initialize(
         @auto_subscribe : Array(String) = [] of String,
+        @trusted_actors : Array(String) = [] of String,
         @s2s_poll_interval_seconds : Int32 = 15,
         @s2s_http_timeout_seconds : Int32 = 10,
         @signatures_required : Bool = true,

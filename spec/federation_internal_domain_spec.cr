@@ -124,4 +124,55 @@ RCL
       FileUtils.rm_rf(dir)
     end
   end
+
+  it "derives a public actor origin from the #+name peer entry" do
+    dir = File.tempname("ocawe_federation_public_identity")
+    Dir.mkdir_p(dir)
+    begin
+      File.write(File.join(dir, "Cawfile"), <<-RCL)
+#+name: executor
+
+settings do
+  federation.internal_peers = ["executor=https://lefine.pro"]
+end
+
+workflow "executor" do
+end
+RCL
+
+      bundle = ACD::Discovery::CawfileLoader.load_root(dir).not_nil!
+      settings = OcaweCore::Utils::ConfigParser.apply_cawfile_settings(Ocawe::Config::Settings.default, bundle)
+      settings = OcaweCore::Utils::ConfigParser.apply_federation_identity(settings, bundle, 8080)
+
+      settings.federation.local_actor.should eq("https://lefine.pro/actors/executor")
+      settings.federation.local_key_id.should eq("https://lefine.pro/actors/executor#main-key")
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  it "parses exact trusted actor URLs from federation settings" do
+    dir = File.tempname("ocawe_federation_trusted_actors")
+    Dir.mkdir_p(dir)
+    begin
+      File.write(File.join(dir, "Cawfile"), <<-RCL)
+settings do
+  federation.trusted_actors = ["https://holos.social/users/alice", "https://mastodon.social/users/bob"]
+end
+
+workflow "trusted" do
+end
+RCL
+
+      bundle = ACD::Discovery::CawfileLoader.load_root(dir).not_nil!
+      settings = OcaweCore::Utils::ConfigParser.apply_cawfile_settings(Ocawe::Config::Settings.default, bundle)
+
+      settings.federation.trusted_actors.should eq([
+        "https://holos.social/users/alice",
+        "https://mastodon.social/users/bob",
+      ])
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
 end
