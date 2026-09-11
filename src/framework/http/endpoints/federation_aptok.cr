@@ -451,7 +451,7 @@ module ACD
 
       private def activitypub_follow_response(activity : Hash(String, JSON::Any)) : Hash(String, JSON::Any)?
         return nil unless activity["type"]?.try(&.as_s?).to_s == "Follow"
-        remote_actor = activity["actor"]?.try(&.as_s?).to_s
+        remote_actor = federation_actor_from_node(activity["actor"]?)
         local_actor = aptok_activity_reference(activity["object"]?)
         local_actor = @settings.federation.local_actor if local_actor.empty?
         return nil if remote_actor.empty?
@@ -533,7 +533,7 @@ module ACD
 
       private def activitypub_accept_response(activity : Hash(String, JSON::Any)) : Bool
         return false unless activity["type"]?.try(&.as_s?).to_s == "Accept"
-        remote_actor = activity["actor"]?.try(&.as_s?).to_s
+        remote_actor = federation_actor_from_node(activity["actor"]?)
         return false if remote_actor.empty?
         update_aptok_follow_state(remote_actor, status: "active", error: "")
         true
