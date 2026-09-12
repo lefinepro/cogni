@@ -7,18 +7,23 @@ require "uri"
 module ACD
   module Kemal
     class App
-      private def process_aptok_inbox_activity(activity : Aptok::JsonMap) : Nil
+      private def process_aptok_inbox_activity(activity : Aptok::JsonMap, recipient_identifier : String? = nil) : Nil
         # Follow and Accept are federation protocol messages, not workflow
         # tasks. Handle them before the registered Cawfile inbox function so a
         # signed follow cannot accidentally start the ACP agent.
         return if activitypub_follow_response(activity)
         return if activitypub_accept_response(activity)
 
-        unless trusted_inbound_activity?(activity)
+        unless trusted_inbound_activity?(activity, recipient_identifier)
           STDERR.puts "[federation] ignore activity from actor without an active follow"
           return
         end
 
+        # A direct actor inbox is already an ActivityPub address. Some
+        # gateways omit the local actor from `to`/`cc` after resolving the
+        # target, so restore that route metadata before the Cawfile handler
+        # selects its project profile.
+        activity = activity_for_inbox_recipient(activity, recipient_identifier)
         return if process_registered_aptok_inbox_activity(activity)
 
         remote_actor = activity["actor"]?.try(&.as_s?).to_s
@@ -30,7 +35,7 @@ module ACD
         process_polled_activity(follow, activity)
       end
 
-      private def trusted_inbound_activity?(activity : Aptok::JsonMap) : Bool
+      private def trusted_inbound_activity?(activity : Aptok::JsonMap, recipient_identifier : String? = nil) : Bool
         return true unless @settings.federation.require_follow
 
         remote_actor = federation_actor_from_node(activity["actor"]?)
@@ -53,10 +58,28 @@ module ACD
           status = record.not_nil!["status"]?.try(&.as_s?).to_s
           next false unless status.empty? || status == "active" || status == "following"
           local_actor = record.not_nil!["local_actor"]?.try(&.as_s?).to_s
+          if recipient_identifier
+            routed_actor = aptok_federation.create_context.get_actor_uri(recipient_identifier)
+            next false unless local_actor.rstrip('/') == routed_actor.rstrip('/')
+            next true
+          end
           activity_targets_local_actor?(activity, local_actor)
         rescue
           false
         end
+      end
+
+      private def activity_for_inbox_recipient(activity : Aptok::JsonMap, recipient_identifier : String?) : Aptok::JsonMap
+        return activity unless recipient_identifier
+
+        local_actor = aptok_federation.create_context.get_actor_uri(recipient_identifier)
+        return activity if activity_targets_local_actor?(activity, local_actor)
+
+        routed = activity.dup
+        routed["to"] = JSON.parse([local_actor].to_json)
+        routed
+      rescue
+        activity
       end
 
       private def process_registered_aptok_inbox_activity(activity : Aptok::JsonMap) : Bool

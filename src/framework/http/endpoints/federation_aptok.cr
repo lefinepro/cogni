@@ -100,7 +100,7 @@ module ACD
         if result.nil?
           # Built-in ForgeFed ticket routing is available even when a workflow
           # does not register a custom inbox function (the executor does this).
-          process_aptok_inbox_activity(activity)
+          process_aptok_inbox_activity(activity, env.params.url["identifier"]?)
           result = {"handled" => JSON.parse("true")}
         end
         handled = result.try(&.["handled"]?).try(&.as_bool?) || false
@@ -210,8 +210,8 @@ module ACD
 
         federation.inbox "/actors/{identifier}/inbox", "/inbox" do |routes|
           routes.with_idempotency(Time::Span.new(hours: 24), "per-inbox")
-          routes.on_any do |_ctx, activity|
-            process_aptok_inbox_activity(activity)
+          routes.on_any do |ctx, activity|
+            process_aptok_inbox_activity(activity, ctx.recipient_identifier)
           end
         end
 
