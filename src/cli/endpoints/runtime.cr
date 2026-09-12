@@ -639,6 +639,10 @@ module OcaweCore
         command << "-d" if detached
         command << "--rm" unless detached
         command.concat(["--name", container_name])
+        # Scratch-based workflow images do not contain a writable /tmp. Aptok
+        # and other TLS tooling use it for short-lived key material, so every
+        # isolated runtime needs the same ephemeral mount.
+        command.concat(["--tmpfs", "/tmp"])
         command.concat(ContainerCredentials.arguments(ENV.to_h))
         command.concat(ContainerFederationEnvironment.arguments(ENV.to_h))
         if mount = mount_workflows_root
