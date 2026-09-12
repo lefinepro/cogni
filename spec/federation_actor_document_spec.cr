@@ -37,9 +37,9 @@ describe "ACD::Kemal::App federation actor document" do
     actor["publicKey"]?.try(&.as_h?).not_nil!["id"]?.try(&.as_s?).should eq(
       "https://deployer.col.pub/actors/deploy-on-akash#main-key"
     )
-    actor["assertionMethod"]?.try(&.as_a?).not_nil!.first?.try(&.as_s?).should eq(
-      "https://deployer.col.pub/actors/deploy-on-akash#main-key"
-    )
+    # The legacy HTTP-signature RSA key belongs in `publicKey`; assertionMethod
+    # is reserved for a data-integrity key and is intentionally omitted.
+    actor["assertionMethod"]?.should be_nil
   ensure
     if path = key_path
       File.delete(path) if File.exists?(path)
