@@ -36,7 +36,15 @@ module ACD
         remote_actor = federation_actor_from_node(activity["actor"]?)
         return false if remote_actor.empty?
         trusted_actors = @settings.federation.trusted_actors
-        return false unless trusted_actors.empty? || trusted_actors.includes?(remote_actor)
+        unless trusted_actors.empty?
+          # An explicit trusted-actor entry is an authorization grant. It must
+          # not depend on a volatile follow handshake: Mastodon does not
+          # resend Follow after a remote runtime is recreated, and older
+          # in-memory federation state may have been lost before persistence
+          # was enabled.
+          return false unless trusted_actors.includes?(remote_actor)
+          return true
+        end
 
         @federation_kv.list("ocawe:federation:follower:").any? do |entry|
           record = JSON.parse(entry.value).as_h?
