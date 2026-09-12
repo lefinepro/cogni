@@ -638,6 +638,7 @@ module OcaweCore
         command = [runtime, "run"]
         command << "-d" if detached
         command << "--rm" unless detached
+        command << "--restart=always" if detached
         command.concat(["--name", container_name])
         # Scratch-based workflow images do not contain a writable /tmp. Aptok
         # and other TLS tooling use it for short-lived key material, so every
