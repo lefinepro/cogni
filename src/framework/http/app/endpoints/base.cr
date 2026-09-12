@@ -1,4 +1,5 @@
 require "set"
+require "aptok/store/sqlite"
 require "../../../utils/time_compat"
 
 module ACD
@@ -7,6 +8,7 @@ module ACD
       RELOAD_INTERVAL_SECONDS = 2.0
       @aptok_federation : Aptok::Federation?
       @federation_kv : Aptok::KvStore
+      @federation_sqlite : Aptok::SqliteConnection?
 
       def initialize(
         @port : Int32,
@@ -30,7 +32,15 @@ module ACD
         @dataset_service = Ocawe::Dataset::Service.new(build_dataset_store(@settings.datasets))
         @file_service = Ocawe::Files::Service.new(@dataset_service)
         @aptok_federation = nil.as(Aptok::Federation?)
-        @federation_kv = Aptok::MemoryKvStore.new
+        @federation_sqlite = nil.as(Aptok::SqliteConnection?)
+        if {"file", "sqlite", "sqlite3"}.includes?(@settings.datasets.adapter.strip.downcase)
+          federation_root = File.expand_path(@settings.datasets.file_root)
+          Dir.mkdir_p(federation_root)
+          @federation_sqlite = Aptok::SqliteConnection.open(File.join(federation_root, "federation.sqlite3"))
+          @federation_kv = Aptok::SqlKvStore.new(@federation_sqlite.not_nil!)
+        else
+          @federation_kv = Aptok::MemoryKvStore.new
+        end
         @mcp_manager = Ocawe::MCP.manager
         @workflow_ids = [] of String
         @service_workflow_ids = [] of String

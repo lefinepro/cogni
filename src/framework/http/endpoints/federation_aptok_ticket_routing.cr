@@ -117,16 +117,38 @@ module ACD
 
       private def activity_targets_local_actor?(activity : Hash(String, JSON::Any), local_actor : String) : Bool
         return true if local_actor.empty?
-        audience = activity["to"]?
-        return true unless audience
+        recipients = [] of String
+        recipient_keys = {"to", "cc", "audience"}
 
-        recipients = if values = audience.as_a?
-                       values.compact_map(&.as_s?)
-                     elsif value = audience.as_s?
-                       [value]
-                     else
-                       [] of String
-                     end
+        append_recipients = ->(node : Hash(String, JSON::Any)) do
+          recipient_keys.each do |key|
+            value = node[key]?
+            next unless value
+            if values = value.as_a?
+              values.each do |entry|
+                recipient = federation_actor_from_node(entry)
+                recipients << recipient unless recipient.empty?
+              end
+            else
+              recipient = federation_actor_from_node(value)
+              recipients << recipient unless recipient.empty?
+            end
+          end
+
+          node["tag"]?.try(&.as_a?).try do |tags|
+            tags.each do |tag|
+              value = tag.as_h?
+              next unless value && {"mention", "mmention"}.includes?(value["type"]?.try(&.as_s?).to_s.downcase)
+              {"href", "id"}.each do |key|
+                recipient = value[key]?.try(&.as_s?).to_s
+                recipients << recipient unless recipient.empty?
+              end
+            end
+          end
+        end
+
+        append_recipients.call(activity)
+        activity["object"]?.try(&.as_h?).try { |object| append_recipients.call(object) }
         return true if recipients.empty?
         recipients.any? { |recipient| recipient.rstrip('/') == local_actor.rstrip('/') }
       end
